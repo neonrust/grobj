@@ -5,7 +5,16 @@ project(grobj LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_executable(grobj main.cpp)
+add_executable(grobj
+	src/main.cpp
+	src/grimrock.cpp
+	include/grobj/grimrock.h
+)
+
+target_include_directories(grobj
+	PRIVATE
+	include
+)
 
 target_compile_options(grobj
 	PRIVATE
