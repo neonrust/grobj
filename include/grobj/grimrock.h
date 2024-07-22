@@ -4,14 +4,21 @@
 #include <iostream>
 #include <vector>
 #include <optional>
+#include <array>
 
 
 using int32 = std::int32_t;
 using byte = std::uint8_t;
 using float32 = float;
 
-// https://www.grimrock.net/modding/model-and-animation-file-formats/
 
+using Filter = std::uint32_t;
+static constexpr Filter includeEmptyNodes  { 1 << 0 };
+static constexpr Filter includeBones       { 1 << 1 };
+static constexpr Filter includeTransforms  { 1 << 2 };
+
+
+// https://www.grimrock.net/modding/model-and-animation-file-formats/
 
 // A FourCC is a four character code string used for headers
 struct FourCC
@@ -48,6 +55,7 @@ struct VertexArray
 	inline operator bool () const { return dataType >= 0 and dim > 0 and stride > 0; }
 
 	static VertexArray read(std::FILE *fp, int32 numVertices);
+	void dump(std::ostream &out, Filter filter, size_t index) const;
 };
 
 struct MeshSegment
@@ -58,6 +66,7 @@ struct MeshSegment
 	int32  count;         // number of triangles
 
 	static MeshSegment read(std::FILE *fp);
+	void dump(std::ostream &out, Filter filter, size_t index) const;
 };
 
 struct MeshData
@@ -65,16 +74,16 @@ struct MeshData
 	FourCC      magic;          // "MESH"
 	int32       version;        // must be 2
 	int32       numVertices;    // number of vertices following
-	VertexArray vertexArrays[15];
-	std::vector<int32> indices; // indices[numIndices]
-	std::vector<MeshSegment> segments; // segmenst[numSegments]
+	std::array<VertexArray, 15> vertexArrays;
+	std::vector<int32>          indices; // indices[numIndices]
+	std::vector<MeshSegment>    segments; // segmenst[numSegments]
 	Vec3        boundCenter;    // center of the bound sphere in model space
 	float32     boundRadius;    // radius of the bound sphere in model space
 	Vec3        boundMin;       // minimum extents of the bound box in model space
 	Vec3        boundMax;       // maximum extents of the bound box in model space
 
 	static MeshData read(std::FILE *fp);
-	void dump(std::ostream &out) const;
+	void dump(std::ostream &out, Filter filter) const;
 };
 
 struct Bone
@@ -83,6 +92,7 @@ struct Bone
 	Mat4x3 invRestMatrix;   // transform from model space to bone space
 
 	static Bone read(std::FILE *fp);
+	void dump(std::ostream &out, Filter filter, size_t index) const;
 };
 
 struct MeshEntity
@@ -93,8 +103,7 @@ struct MeshEntity
 	byte     castShadow;       // 0 = shadow casting off, 1 = shadow casting on
 
 	static MeshEntity read(std::FILE *fp);
-
-	void dump(std::ostream &out) const;
+	void dump(std::ostream &out, Filter filter) const;
 };
 
 struct Node
@@ -106,8 +115,7 @@ struct Node
 	std::optional<MeshEntity> meshEntity;
 
 	static Node read(std::FILE *fp);
-
-	void dump(std::ostream &out, size_t index) const;
+	void dump(std::ostream &out, Filter filter, size_t index) const;
 };
 
 struct ModelFile
@@ -117,6 +125,5 @@ struct ModelFile
 	std::vector<Node> nodes;          // nodes[numNodes]
 
 	static ModelFile read(std::FILE *fp);
-
-	void dump(std::ostream &out) const;
+	void dump(std::ostream &out, Filter filter) const;
 };

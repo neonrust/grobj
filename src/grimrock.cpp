@@ -94,13 +94,13 @@ ModelFile ModelFile::read(FILE *fp)
 
 // ----------------------------------------------------------------------------
 
-void ModelFile::dump(std::ostream &out) const
+void ModelFile::dump(std::ostream &out, Filter filter) const
 {
-	out << "  " << nodes.size() << "nodes\n";
+	out << "  nodes: " << nodes.size() << '\n';
 	auto idx = 0u;
 	for(const auto &node: nodes)
 	{
-		node.dump(out, idx);
+		node.dump(out, filter, idx);
 		++idx;
 	}
 }
@@ -140,17 +140,21 @@ Node Node::read(FILE *fp)
 
 // ----------------------------------------------------------------------------
 
-void Node::dump(std::ostream &out, size_t index) const
+void Node::dump(std::ostream &out, Filter filter, size_t index) const
 {
-	out << "  node:" << index << '\n';
+	const auto is_empty = not meshEntity.has_value();
 
-	if(meshEntity.has_value())
+	if(not is_empty or (filter & includeEmptyNodes) > 0)
 	{
-		out << " MeshEntity\n";
-		meshEntity.value().dump(out);
+		out << "    node." << index << ": '" << name << "'";
+		if(not is_empty)
+		{
+			out << "  MeshEntity\n";
+			meshEntity.value().dump(out, filter);
+		}
+		else
+			out << '\n';
 	}
-	else
-		out << " <empty>\n";
 }
 
 // ----------------------------------------------------------------------------
@@ -181,17 +185,19 @@ MeshEntity MeshEntity::read(FILE *fp)
 
 // ----------------------------------------------------------------------------
 
-void MeshEntity::dump(std::ostream &out) const
+void MeshEntity::dump(std::ostream &out, Filter filter) const
 {
-	meshData.dump(out);
-	out << "  bones: " << bones.size();
-	auto idx = 0u;
-	for(const auto &bone: bones)
+	meshData.dump(out, filter);
+
+	if(not bones.empty() and (filter & includeBones) > 0)
 	{
-		(void)bone;
-		(void)idx;
-		// bone.dump(name, out, idx);
-		++idx;
+		out << "      bones: " << bones.size() << '\n';
+		auto idx = 0u;
+		for(const auto &bone: bones)
+		{
+			bone.dump(out, filter, idx);
+			++idx;
+		}
 	}
 }
 
@@ -220,6 +226,13 @@ Bone Bone::read(FILE *fp)
 	bn.invRestMatrix = Mat4x3::read(fp);
 
 	return bn;
+}
+
+// ----------------------------------------------------------------------------
+
+void Bone::dump(std::ostream &out, [[maybe_unused]] Filter filter, size_t index) const
+{
+	out << "        bone." << index << " -> node." << boneNodeIndex << '\n';
 }
 
 // ----------------------------------------------------------------------------
@@ -257,7 +270,7 @@ MeshData MeshData::read(FILE *fp)
 	md.magic = FourCC::read(fp);
 	md.version = int32_read(fp);
 	md.numVertices = int32_read(fp);
-	for(auto idx = 0; idx < 15; ++idx)
+	for(auto idx = 0u; idx < 15; ++idx)
 		md.vertexArrays[idx] = VertexArray::read(fp, md.numVertices);
 
 	auto numIndices = int32_read(fp);
@@ -282,9 +295,23 @@ MeshData MeshData::read(FILE *fp)
 
 // ----------------------------------------------------------------------------
 
-void MeshData::dump(std::ostream &out) const
+void MeshData::dump(std::ostream &out, Filter filter) const
 {
-	out << "  vertices: " << numVertices << '\n';
+	out << "      vertices: " << numVertices << " indices: " << indices.size() << " segments: " << segments.size() << '\n';
+	auto idx = 0u;
+	for(const auto &va: vertexArrays)
+	{
+		if(va)
+			va.dump(out, filter, idx);
+		++idx;
+	}
+	idx = 0;
+	for(const auto &seg: segments)
+	{
+		seg.dump(out, filter, idx);
+		++idx;
+	}
+
 }
 
 // ----------------------------------------------------------------------------
@@ -314,6 +341,21 @@ VertexArray VertexArray::read(FILE *fp, int32 numVertices)
 
 // ----------------------------------------------------------------------------
 
+void VertexArray::dump(std::ostream &out, [[maybe_unused]] Filter filter, size_t index) const
+{
+	const char *typeName;
+	switch(dataType)
+	{
+	case 0: typeName = "byte"; break;
+	case 1: typeName = "int16"; break;
+	case 2: typeName = "int32"; break;
+	case 3: typeName = "float32"; break;
+	}
+	out << "        data." << index << ": " << dim << "x " << typeName << '\n';
+}
+
+// ----------------------------------------------------------------------------
+
 MeshSegment MeshSegment::read(FILE *fp)
 {
 	// String material;      // name of the material defined in Lua script
@@ -331,6 +373,13 @@ MeshSegment MeshSegment::read(FILE *fp)
 	assert(ms.count > 0);
 
 	return ms;
+}
+
+// ----------------------------------------------------------------------------
+
+void MeshSegment::dump(std::ostream &out, [[maybe_unused]] Filter filter, size_t index) const
+{
+	out << "        segment." << index << ": triangles: " << count << " material: '" << material << "'\n";
 }
 
 // ----------------------------------------------------------------------------
