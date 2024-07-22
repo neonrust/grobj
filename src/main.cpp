@@ -6,13 +6,14 @@
 #include <chrono>
 using namespace std::chrono;
 #include <filesystem>
+#include <variant>
 namespace fs = std::filesystem;
 
 #include "grobj/grimrock.h"
 
 using namespace std::literals;
 
-std::optional<ModelFile> read_model(std::string_view filename);
+std::variant<std::string, ModelFile> read_model(std::string_view filename);
 bool write_obj(std::string filename, const ModelFile &model);
 
 // ----------------------------------------------------------------------------
@@ -44,12 +45,13 @@ int main(int argc, char *argv[])
 		const auto T0 = steady_clock::now();
 		auto model_ = read_model(filename);
 
-		if(model_.has_value())
+		fs::path path(filename);
+
+		if(std::holds_alternative<ModelFile>(model_))
 		{
-			fs::path path(filename);
 			const auto T1 = steady_clock::now();
 
-			const auto &model = model_.value();
+			const auto &model = std::get<ModelFile>(model_);
 
 			std::cout << "[" << path.filename().generic_string() << "] read " << model.nodes.size() << " nodes  (" << duration_cast<microseconds>(T1 - T0).count() << " µs):\n";
 			model.dump(std::cout);
@@ -58,7 +60,7 @@ int main(int argc, char *argv[])
 			write_obj(output_file, model);
 		}
 		else
-			std::cerr << "reading model FAILED: " << filename << '\n';
+			std::cerr << "[" << path.filename().generic_string() << "]: " << std::get<std::string>(model_) << '\n';
 	}
 
 	return 0;
@@ -66,17 +68,13 @@ int main(int argc, char *argv[])
 
 // ----------------------------------------------------------------------------
 
-std::optional<ModelFile> read_model(std::string_view filename)
+std::variant<std::string, ModelFile> read_model(std::string_view filename)
 {
 	auto *fp = std::fopen(filename.data(), "rb");
 	if(not fp)
-	{
-		// TODO: return error
-		// std::cerr << "[" << path.filename().generic_string() << "] failed to open file: " << std::strerror(errno) << '\n';
-		return std::nullopt;
-	}
+		return "FAILED: "s + std::strerror(errno);
 
-		   // make sure the file is closed in all cases
+	// make sure the file is closed in all cases
 	struct Closer
 	{
 		~Closer() { std::fclose(fp); }
