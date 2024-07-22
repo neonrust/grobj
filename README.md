@@ -1,5 +1,5 @@
 # grobj
-Grimrock Object reader/converter
+Reader/converter of Legend of Grimrock models (both 1 and 2, I think)
 
 ## Dependncies
 
