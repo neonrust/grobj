@@ -35,4 +35,4 @@
 CMakeLists.txt.user
 
 # binaries
-grobj
+/grobj
