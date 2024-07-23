@@ -8,7 +8,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(grobj
 	src/main.cpp
 	src/grimrock.cpp
+	src/dump.cpp
+
 	include/grobj/grimrock.h
+	include/grobj/dump.h
 )
 
 target_include_directories(grobj

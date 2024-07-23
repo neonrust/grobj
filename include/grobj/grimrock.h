@@ -1,21 +1,16 @@
 #pragma once
 
 #include <cstdint>
-#include <iostream>
+#include <cstdio>
 #include <vector>
 #include <optional>
-#include <array>
+#include <string>
 
 
-using int32 = std::int32_t;
 using byte = std::uint8_t;
+using int16 = std::int16_t;
+using int32 = std::int32_t;
 using float32 = float;
-
-
-using Filter = std::uint32_t;
-static constexpr Filter includeEmptyNodes  { 1 << 0 };
-static constexpr Filter includeBones       { 1 << 1 };
-static constexpr Filter includeTransforms  { 1 << 2 };
 
 
 // https://www.grimrock.net/modding/model-and-animation-file-formats/
@@ -23,8 +18,12 @@ static constexpr Filter includeTransforms  { 1 << 2 };
 // A FourCC is a four character code string used for headers
 struct FourCC
 {
-	byte    data[4];
+	union {
+		byte data[4];
+		std::uint32_t raw;
+	};
 
+	inline FourCC() : raw(0) {}
 	static FourCC read(std::FILE *fp);
 };
 
@@ -45,85 +44,127 @@ struct Mat4x3
 	static Mat4x3 read(std::FILE *fp);
 };
 
+enum ArrayDataType
+{
+	Byte = 0,
+	Int16 = 1,
+	Int32 = 2,
+	Float32 = 3,
+};
+
+enum ArrayPurpose
+{
+	Position    = 0,
+	Normal      = 1,
+	Tangent     = 2,
+	Bitangent   = 3,
+	Color       = 4,
+	TexCoord0   = 5,
+	TexCoord1   = 6,
+	TexCoord2   = 7,
+	TexCoord3   = 8,
+	TexCoord4   = 9,
+	TexCoord5   = 10,
+	TexCoord6   = 11,
+	TexCoord7   = 12,
+	BoneIndex   = 13,
+	BoneWeight  = 14,
+};
+static constexpr auto ArrayCount = BoneWeight + 1; // must always be <last enum> + 1
+
 struct VertexArray
 {
-	int32 dataType;   // 0 = byte, 1 = int16, 2 = int32, 3 = float32   0 if array unused
-	int32 dim;        // dimensions of the data type (2-4)             0 if array unused
-	int32 stride;     // byte offset from vertex to vertex             0 if array unused
-	std::vector<byte>  rawVertexData;// rawVertexData[numVertices * stride];
+	ArrayPurpose      purpose;
+	ArrayDataType     dataType;   //                                               Byte if array unused
+	int32             dim;        // dimensions of the data type (2-4)             0 if array unused
+	int32             stride;     // byte offset from vertex to vertex             0 if array unused
+	std::vector<byte> rawVertexData;// rawVertexData[numVertices * stride];
+
+	inline VertexArray() : purpose(Position), dataType(Byte), dim(0), stride(0) {}
 
 	inline operator bool () const { return dataType >= 0 and dim > 0 and stride > 0; }
 
 	static VertexArray read(std::FILE *fp, int32 numVertices);
-	void dump(std::ostream &out, Filter filter, size_t index) const;
 };
 
 struct MeshSegment
 {
 	std::string material;      // name of the material defined in Lua script
-	int32  primitiveType; // always 2
-	int32  firstIndex;    // starting location in the index list
-	int32  count;         // number of triangles
+	int32       primitiveType; // always 2
+	int32       firstIndex;    // starting location in the index list
+	int32       count;         // number of triangles
 
 	static MeshSegment read(std::FILE *fp);
-	void dump(std::ostream &out, Filter filter, size_t index) const;
 };
 
 struct MeshData
 {
-	FourCC      magic;          // "MESH"
-	int32       version;        // must be 2
-	int32       numVertices;    // number of vertices following
-	std::array<VertexArray, 15> vertexArrays;
-	std::vector<int32>          indices; // indices[numIndices]
-	std::vector<MeshSegment>    segments; // segmenst[numSegments]
-	Vec3        boundCenter;    // center of the bound sphere in model space
-	float32     boundRadius;    // radius of the bound sphere in model space
-	Vec3        boundMin;       // minimum extents of the bound box in model space
-	Vec3        boundMax;       // maximum extents of the bound box in model space
+	FourCC         magic;          // "MESH"
+	int32          version;        // must be 2
+	int32          numVertices;    // number of vertices following
+	// TODO: use std::optional ?
+	VertexArray    positionArray;
+	VertexArray    normalArray;
+	VertexArray    tangentArray;
+	VertexArray    bitangentArray;
+	VertexArray    colorArray;
+	VertexArray    texCoordArray[8];
+	VertexArray    boneArray;
+	VertexArray    boneWeightArray;
+	std::vector<int32>       indices; // indices[numIndices]
+	std::vector<MeshSegment> segments; // segmenst[numSegments]
+	Vec3           boundCenter;    // center of the bound sphere in model space
+	float32        boundRadius;    // radius of the bound sphere in model space
+	Vec3           boundMin;       // minimum extents of the bound box in model space
+	Vec3           boundMax;       // maximum extents of the bound box in model space
 
+	inline MeshData() : version(0), numVertices(0), boundRadius(0) {}
 	static MeshData read(std::FILE *fp);
-	void dump(std::ostream &out, Filter filter) const;
 };
 
 struct Bone
 {
-	int32 boneNodeIndex;    // index of the node used to deform the object
+	int32  nodeIndex;       // index of the node used to deform the object
 	Mat4x3 invRestMatrix;   // transform from model space to bone space
 
 	static Bone read(std::FILE *fp);
-	void dump(std::ostream &out, Filter filter, size_t index) const;
 };
 
 struct MeshEntity
 {
-	MeshData meshData;
+	MeshData          meshData;
 	std::vector<Bone> bones;
-	Vec3     emissiveColor;    // deprecated, should be set to 0,0,0
-	byte     castShadow;       // 0 = shadow casting off, 1 = shadow casting on
+	Vec3              emissiveColor;    // deprecated, should be set to 0,0,0
+	byte              castShadow;       // 0 = shadow casting off, 1 = shadow casting on
 
 	static MeshEntity read(std::FILE *fp);
-	void dump(std::ostream &out, Filter filter) const;
+};
+
+enum NodeType
+{
+	TypeEmpty      = -1,
+	TypeMeshEntity = 0
 };
 
 struct Node
 {
-	std::string  name;
-	Mat4x3  localToParent;
-	int32   parent;        // index of the parent node or -1 if no parent
-	int32   type;          // -1 = no entity data, 0 = MeshEntity follows
+	std::string               name;
+	Mat4x3                    localToParent;
+	int32                     parent;        // index of the parent node or -1 if no parent
+	NodeType                  type;
 	std::optional<MeshEntity> meshEntity;
 
+	inline Node() : parent(-1), type(TypeEmpty) {}
 	static Node read(std::FILE *fp);
-	void dump(std::ostream &out, Filter filter, size_t index) const;
 };
 
 struct ModelFile
 {
-	FourCC  magic;           // "MDL1"
-	int32   version;         // always two
+	FourCC            magic;           // "MDL1"
+	int32             version;         // always two
 	std::vector<Node> nodes;          // nodes[numNodes]
 
+	inline ModelFile() : version(0) {}
 	static ModelFile read(std::FILE *fp);
-	void dump(std::ostream &out, Filter filter) const;
 };
+

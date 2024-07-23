@@ -1,6 +1,8 @@
 #include "grobj/grimrock.h"
 
 #include <assert.h>
+#include <iostream>
+#include <stdexcept>
 
 
 // ----------------------------------------------------------------------------
@@ -94,19 +96,6 @@ ModelFile ModelFile::read(FILE *fp)
 
 // ----------------------------------------------------------------------------
 
-void ModelFile::dump(std::ostream &out, Filter filter) const
-{
-	out << "  nodes: " << nodes.size() << '\n';
-	auto idx = 0u;
-	for(const auto &node: nodes)
-	{
-		node.dump(out, filter, idx);
-		++idx;
-	}
-}
-
-// ----------------------------------------------------------------------------
-
 FourCC FourCC::read(FILE *fp)
 {
 	FourCC fcc;
@@ -131,30 +120,11 @@ Node Node::read(FILE *fp)
 	n.name = string_read(fp);
 	n.localToParent = Mat4x3::read(fp);
 	n.parent = int32_read(fp);
-	n.type = int32_read(fp);
+	n.type = NodeType(int32_read(fp));
 	if(n.type == 0)
 		n.meshEntity = MeshEntity::read(fp);
 
 	return n;
-}
-
-// ----------------------------------------------------------------------------
-
-void Node::dump(std::ostream &out, Filter filter, size_t index) const
-{
-	const auto is_empty = not meshEntity.has_value();
-
-	if(not is_empty or (filter & includeEmptyNodes) > 0)
-	{
-		out << "    node." << index << ": '" << name << "'";
-		if(not is_empty)
-		{
-			out << "  MeshEntity\n";
-			meshEntity.value().dump(out, filter);
-		}
-		else
-			out << '\n';
-	}
 }
 
 // ----------------------------------------------------------------------------
@@ -185,24 +155,6 @@ MeshEntity MeshEntity::read(FILE *fp)
 
 // ----------------------------------------------------------------------------
 
-void MeshEntity::dump(std::ostream &out, Filter filter) const
-{
-	meshData.dump(out, filter);
-
-	if(not bones.empty() and (filter & includeBones) > 0)
-	{
-		out << "      bones: " << bones.size() << '\n';
-		auto idx = 0u;
-		for(const auto &bone: bones)
-		{
-			bone.dump(out, filter, idx);
-			++idx;
-		}
-	}
-}
-
-// ----------------------------------------------------------------------------
-
 Vec3 Vec3::read(FILE *fp)
 {
 	Vec3 v3;
@@ -217,22 +169,15 @@ Vec3 Vec3::read(FILE *fp)
 
 Bone Bone::read(FILE *fp)
 {
-	// int32 boneNodeIndex;    // index of the node used to deform the object
+	// int32  nodeIndex;    // index of the node used to deform the object
 	// Mat4x3 invRestMatrix;   // transform from model space to bone space
 
 	Bone bn;
 
-	bn.boneNodeIndex = int32_read(fp);
+	bn.nodeIndex = int32_read(fp);
 	bn.invRestMatrix = Mat4x3::read(fp);
 
 	return bn;
-}
-
-// ----------------------------------------------------------------------------
-
-void Bone::dump(std::ostream &out, [[maybe_unused]] Filter filter, size_t index) const
-{
-	out << "        bone." << index << " -> node." << boneNodeIndex << '\n';
 }
 
 // ----------------------------------------------------------------------------
@@ -256,7 +201,8 @@ MeshData MeshData::read(FILE *fp)
 	// FourCC      magic;          // "MESH"
 	// int32       version;        // must be 2
 	// int32       numVertices;    // number of vertices following
-	// VertexArray vertexArrays[15];
+	// VertexArray positionArray;
+	//   :              :   +14
 	// int32       numIndices;     // number of triangle indices following
 	// int32       *indices;       // indices[numIndices]
 	// int32       numSegments;    // number of mesh segments following
@@ -270,8 +216,32 @@ MeshData MeshData::read(FILE *fp)
 	md.magic = FourCC::read(fp);
 	md.version = int32_read(fp);
 	md.numVertices = int32_read(fp);
-	for(auto idx = 0u; idx < 15; ++idx)
-		md.vertexArrays[idx] = VertexArray::read(fp, md.numVertices);
+	for(auto idx = 0u; idx < ArrayCount; ++idx) // see ArrayPrupose
+	{
+		auto arr = VertexArray::read(fp, md.numVertices);
+		if(not arr) // skip "empty" arrays
+			continue;
+
+		arr.purpose = ArrayPurpose(idx);
+		switch(ArrayPurpose(idx))
+		{
+		case Position:  md.positionArray = arr; break;
+		case Normal:    md.normalArray = arr; break;
+		case Tangent:   md.tangentArray = arr; break;
+		case Bitangent: md.bitangentArray = arr; break;
+		case Color:     md.colorArray = arr; break;
+		case TexCoord0:
+		case TexCoord1:
+		case TexCoord2:
+		case TexCoord3:
+		case TexCoord4:
+		case TexCoord5:
+		case TexCoord6:
+		case TexCoord7:  md.texCoordArray[idx - TexCoord0] = arr; break;
+		case BoneIndex:  md.boneArray = arr; break;
+		case BoneWeight: md.boneWeightArray = arr; break;
+		}
+	}
 
 	auto numIndices = int32_read(fp);
 	if(numIndices > 0)
@@ -295,28 +265,7 @@ MeshData MeshData::read(FILE *fp)
 
 // ----------------------------------------------------------------------------
 
-void MeshData::dump(std::ostream &out, Filter filter) const
-{
-	out << "      vertices: " << numVertices << " indices: " << indices.size() << " segments: " << segments.size() << '\n';
-	auto idx = 0u;
-	for(const auto &va: vertexArrays)
-	{
-		if(va)
-			va.dump(out, filter, idx);
-		++idx;
-	}
-	idx = 0;
-	for(const auto &seg: segments)
-	{
-		seg.dump(out, filter, idx);
-		++idx;
-	}
-
-}
-
-// ----------------------------------------------------------------------------
-
-VertexArray VertexArray::read(FILE *fp, int32 numVertices)
+VertexArray VertexArray::read(std::FILE *fp, int32 numVertices)
 {
 	// int32 dataType;   // 0 = byte, 1 = int16, 2 = int32, 3 = float32   0 if array unused
 	// int32 dim;        // dimensions of the data type (2-4)             0 if array unused
@@ -324,10 +273,10 @@ VertexArray VertexArray::read(FILE *fp, int32 numVertices)
 	// byte  *rawVertexData;// rawVertexData[numVertices * stride];
 
 	VertexArray va;
-	va.dataType = int32_read(fp);
+	va.dataType = ArrayDataType(int32_read(fp));
 	va.dim = int32_read(fp);
 	va.stride = int32_read(fp);
-	if(va.dataType >= 0 and va.dim > 0 and va.stride > 0)
+	if(va)
 	{
 		const auto dataSize = size_t(numVertices * va.stride);
 		va.rawVertexData.resize(dataSize);
@@ -337,21 +286,6 @@ VertexArray VertexArray::read(FILE *fp, int32 numVertices)
 	}
 
 	return va;
-}
-
-// ----------------------------------------------------------------------------
-
-void VertexArray::dump(std::ostream &out, [[maybe_unused]] Filter filter, size_t index) const
-{
-	const char *typeName;
-	switch(dataType)
-	{
-	case 0: typeName = "byte"; break;
-	case 1: typeName = "int16"; break;
-	case 2: typeName = "int32"; break;
-	case 3: typeName = "float32"; break;
-	}
-	out << "        data." << index << ": " << dim << "x " << typeName << '\n';
 }
 
 // ----------------------------------------------------------------------------
@@ -373,13 +307,6 @@ MeshSegment MeshSegment::read(FILE *fp)
 	assert(ms.count > 0);
 
 	return ms;
-}
-
-// ----------------------------------------------------------------------------
-
-void MeshSegment::dump(std::ostream &out, [[maybe_unused]] Filter filter, size_t index) const
-{
-	out << "        segment." << index << ": triangles: " << count << " material: '" << material << "'\n";
 }
 
 // ----------------------------------------------------------------------------
